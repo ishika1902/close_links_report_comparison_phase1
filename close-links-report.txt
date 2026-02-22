@@ -1,270 +1,182 @@
 import pandas as pd
 import requests
-import json
-import re
 import os
 
-# =====================================================
+# =========================
 # CONFIGURATION
-# =====================================================
+# =========================
 
 PREVIOUS_FILE = "input/previous_month.xlsx"
 CURRENT_FILE = "input/current_month.xlsx"
-OUTPUT_FILE = "output/entity_changes.xlsx"
+OUTPUT_FILE = "output/comparison_output.xlsx"
 
-ENTITY_ID = "CorporationID"
-REG_COLUMN = "RegistrationNumber"
+MAIN_REPORT_API = "https://your-main-report-api-url"
+STATUS_API = "https://your-status-api-url"
 
-MAIN_REPORT_API_URL = "https://englobe-uat.hk.hsbc/api/api/queries/Close Links Report - for FCA Submission"
-STATUS_API_URL = "https://your-status-api-url"
+USERNAME = "your_username"
+PASSWORD = "your_password"
 
-# =====================================================
-# AUTHENTICATION (YOUR EXISTING STYLE)
-# =====================================================
+# =========================
+# AUTHENTICATION
+# =========================
 
-def getData():
-    prod_url = "https://englobe-uat.hk.hsbc/ids/connect/token"
+def get_auth_token():
+    response = requests.post(
+        "https://your-auth-url",
+        json={"username": USERNAME, "password": PASSWORD}
+    )
+    return response.json().get("token")
 
-    payload = "xxxxx"  # <-- replace with real payload
-    headers = {
-        "content-type": "application/x-www-form-urlencoded",
-        "cache-control": "no-cache"
-    }
+# =========================
+# LOAD EXCEL FILES
+# =========================
 
-    response_token = requests.request(
-        "POST",
-        prod_url,
-        data=payload,
-        headers=headers,
-        verify=False
+def load_report(file_path):
+    df = pd.read_excel(file_path, skiprows=3)
+
+    # Remove unwanted columns
+    df = df.drop(columns=["Voting (%)", "Interest (%)"], errors="ignore")
+
+    # Standardize column names (strip spaces)
+    df.columns = df.columns.str.strip()
+
+    return df
+
+# =========================
+# FIX BLANK REGISTRATION NUMBERS
+# =========================
+
+def fetch_registration_from_api(entity_id, headers):
+    response = requests.get(
+        f"{MAIN_REPORT_API}/{entity_id}",
+        headers=headers
     )
 
-    token = response_token.text.split(',')[0]
-    str_len = len(token)
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("Entity Registration Number")
+    return None
 
-    access_token_server = token[16:str_len - 1]
-    access_token_server = access_token_server[1:]
+def fix_blank_registrations(df, headers):
+    for index, row in df.iterrows():
+        if pd.isna(row.get("Entity Registration Number")):
+            entity_id = row.get("CorporationID")
+            latest_reg = fetch_registration_from_api(entity_id, headers)
+            if latest_reg:
+                df.at[index, "Entity Registration Number"] = latest_reg
+    return df
 
-    auth_key = "bearer " + access_token_server
+# =========================
+# FETCH STATUS DATA
+# =========================
 
-    return auth_key
+def fetch_status_dataset(headers):
+    response = requests.get(STATUS_API, headers=headers)
+    if response.status_code == 200:
+        return pd.DataFrame(response.json())
+    return pd.DataFrame()
 
+# =========================
+# COMPARE REPORTS
+# =========================
 
-print("Authenticating...")
-AUTH_HEADER = {
-    "Authorization": getData(),
-    "Accept": "application/json",
-    "Content-Type": "application/json"
-}
-print("Authentication successful.")
+def compare_reports(prev_df, curr_df, status_df):
 
-# =====================================================
-# NORMALIZATION FUNCTIONS
-# =====================================================
+    comparison_columns = [
+        "Subsidiary",
+        "Country ISO-2 Code",
+        "Entity Registration Number",
+        "Registered Address"
+    ]
 
-ADDRESS_COLUMNS = [
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_E",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_City",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity",
-    "SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country",
-]
+    prev_df = prev_df.set_index("CorporationID")
+    curr_df = curr_df.set_index("CorporationID")
 
-COMPARE_COLUMNS = [
-    "EntityName",
-    "RegistrationNumber"
-]
+    prev_ids = set(prev_df.index)
+    curr_ids = set(curr_df.index)
 
-def normalize_text(value):
-    if pd.isna(value):
-        return ""
-    value = str(value)
-    value = re.sub(r"\s+", " ", value)
-    value = re.sub(r",+", ",", value)
-    value = value.strip(" ,")
-    return value.lower().strip()
+    added_ids = curr_ids - prev_ids
+    deleted_ids = prev_ids - curr_ids
+    common_ids = prev_ids & curr_ids
 
-def merge_address(row):
-    parts = []
-    for col in ADDRESS_COLUMNS:
-        val = row.get(col, "")
-        if pd.notna(val) and str(val).strip() != "":
-            parts.append(str(val).strip())
-    merged = ", ".join(parts)
-    return normalize_text(merged)
+    results = []
 
-# =====================================================
-# LOAD EXCEL FILES
-# =====================================================
+    # Added
+    for cid in added_ids:
+        row = curr_df.loc[cid]
+        results.append({
+            "CorporationID": cid,
+            "ChangeType": "Added",
+            **row.to_dict()
+        })
 
-print("Loading Excel files...")
+    # Deleted
+    for cid in deleted_ids:
+        row = prev_df.loc[cid]
+        status_row = status_df[status_df["CorporationID"] == cid]
 
-prev_df = pd.read_excel(PREVIOUS_FILE)
-curr_df = pd.read_excel(CURRENT_FILE)
+        when_modified = None
+        status = None
 
-# Remove blank or null CorporationID
-prev_df = prev_df[prev_df[ENTITY_ID].notna()]
-curr_df = curr_df[curr_df[ENTITY_ID].notna()]
+        if not status_row.empty:
+            when_modified = status_row.iloc[0].get("WhenModified")
+            status = status_row.iloc[0].get("Status")
 
-prev_df = prev_df[prev_df[ENTITY_ID].astype(str).str.strip() != ""]
-curr_df = curr_df[curr_df[ENTITY_ID].astype(str).str.strip() != ""]
+        results.append({
+            "CorporationID": cid,
+            "ChangeType": "Deleted",
+            "Status": status,
+            "WhenModified": when_modified,
+            **row.to_dict()
+        })
 
-prev_df[ENTITY_ID] = prev_df[ENTITY_ID].astype(str).str.strip()
-curr_df[ENTITY_ID] = curr_df[ENTITY_ID].astype(str).str.strip()
+    # Modified
+    for cid in common_ids:
+        prev_row = prev_df.loc[cid]
+        curr_row = curr_df.loc[cid]
 
-if prev_df[ENTITY_ID].duplicated().any():
-    raise Exception("Duplicate CorporationID in previous file")
+        for col in comparison_columns:
+            if prev_row.get(col) != curr_row.get(col):
+                status_row = status_df[status_df["CorporationID"] == cid]
+                when_modified = None
 
-if curr_df[ENTITY_ID].duplicated().any():
-    raise Exception("Duplicate CorporationID in current file")
+                if not status_row.empty:
+                    when_modified = status_row.iloc[0].get("WhenModified")
 
-# =====================================================
-# CALL MAIN REPORT API (FULL DATASET)
-# =====================================================
+                results.append({
+                    "CorporationID": cid,
+                    "ChangeType": "Modified",
+                    "ModifiedColumn": col,
+                    "OldValue": prev_row.get(col),
+                    "NewValue": curr_row.get(col),
+                    "WhenModified": when_modified
+                })
 
-print("Calling Main Report API...")
+    return pd.DataFrame(results)
 
-main_response = requests.post(
-    MAIN_REPORT_API_URL,
-    headers=AUTH_HEADER,
-    params={"reportDate": "2026-01-31"},  # change dynamically if needed
-    verify=False
-)
+# =========================
+# MAIN EXECUTION
+# =========================
 
-main_data = main_response.json()
+def main():
 
-if isinstance(main_data, str):
-    main_data = json.loads(main_data)
+    os.makedirs("output", exist_ok=True)
 
-main_df = pd.DataFrame(main_data)
+    token = get_auth_token()
+    headers = {"Authorization": f"Bearer {token}"}
 
-main_df[ENTITY_ID] = main_df[ENTITY_ID].astype(str).str.strip()
-main_df = main_df[[ENTITY_ID, REG_COLUMN]]
+    prev_df = load_report(PREVIOUS_FILE)
+    curr_df = load_report(CURRENT_FILE)
 
-# Recover blank RegistrationNumber
-curr_df = curr_df.merge(
-    main_df,
-    on=ENTITY_ID,
-    how="left",
-    suffixes=("", "_API")
-)
+    curr_df = fix_blank_registrations(curr_df, headers)
 
-curr_df[REG_COLUMN] = curr_df[REG_COLUMN].fillna(
-    curr_df[f"{REG_COLUMN}_API"]
-)
+    status_df = fetch_status_dataset(headers)
 
-curr_df.loc[
-    curr_df[REG_COLUMN].astype(str).str.strip() == "",
-    REG_COLUMN
-] = curr_df[f"{REG_COLUMN}_API"]
+    comparison_df = compare_reports(prev_df, curr_df, status_df)
 
-curr_df.drop(columns=[f"{REG_COLUMN}_API"], inplace=True)
+    comparison_df.to_excel(OUTPUT_FILE, index=False)
 
-# =====================================================
-# NORMALIZE FIELDS
-# =====================================================
+    print("Comparison completed successfully.")
 
-prev_df["NormalizedAddress"] = prev_df.apply(merge_address, axis=1)
-curr_df["NormalizedAddress"] = curr_df.apply(merge_address, axis=1)
-
-for col in COMPARE_COLUMNS:
-    prev_df[col] = prev_df[col].apply(normalize_text)
-    curr_df[col] = curr_df[col].apply(normalize_text)
-
-# =====================================================
-# DETECT CHANGES
-# =====================================================
-
-print("Detecting changes...")
-
-prev_ids = set(prev_df[ENTITY_ID])
-curr_ids = set(curr_df[ENTITY_ID])
-
-added_ids = curr_ids - prev_ids
-deleted_ids = prev_ids - curr_ids
-common_ids = prev_ids & curr_ids
-
-added = curr_df[curr_df[ENTITY_ID].isin(added_ids)].copy()
-deleted = prev_df[prev_df[ENTITY_ID].isin(deleted_ids)].copy()
-
-modified_list = []
-
-for entity_id in common_ids:
-    prev_row = prev_df[prev_df[ENTITY_ID] == entity_id].iloc[0]
-    curr_row = curr_df[curr_df[ENTITY_ID] == entity_id].iloc[0]
-
-    changed = False
-
-    for col in COMPARE_COLUMNS:
-        if prev_row[col] != curr_row[col]:
-            changed = True
-            break
-
-    if prev_row["NormalizedAddress"] != curr_row["NormalizedAddress"]:
-        changed = True
-
-    if changed:
-        modified_list.append(curr_row)
-
-modified = pd.DataFrame(modified_list)
-
-# =====================================================
-# CALL STATUS API
-# =====================================================
-
-print("Calling Status API...")
-
-status_response = requests.get(
-    STATUS_API_URL,
-    headers=AUTH_HEADER,
-    verify=False
-)
-
-status_data = status_response.json()
-
-if isinstance(status_data, str):
-    status_data = json.loads(status_data)
-
-status_df = pd.DataFrame(status_data)
-
-status_df[ENTITY_ID] = status_df[ENTITY_ID].astype(str).str.strip()
-status_df = status_df[[ENTITY_ID, "Status", "WhenModified"]]
-
-def enrich(df):
-    if df.empty:
-        return df
-    return df.merge(status_df, on=ENTITY_ID, how="left")
-
-added = enrich(added)
-deleted = enrich(deleted)
-modified = enrich(modified)
-
-# =====================================================
-# FINAL OUTPUT
-# =====================================================
-
-added["ChangeType"] = "ADDED"
-deleted["ChangeType"] = "DELETED"
-modified["ChangeType"] = "MODIFIED"
-
-final_df = pd.concat([added, deleted, modified], ignore_index=True)
-
-order = {"ADDED": 1, "DELETED": 2, "MODIFIED": 3}
-final_df["SortOrder"] = final_df["ChangeType"].map(order)
-
-final_df = final_df.sort_values(["SortOrder", ENTITY_ID])
-final_df.drop(columns=["SortOrder"], inplace=True)
-
-os.makedirs("output", exist_ok=True)
-final_df.to_excel(OUTPUT_FILE, index=False)
-
-print("================================")
-print("Reconciliation Complete")
-print(f"Added: {len(added)}")
-print(f"Deleted: {len(deleted)}")
-print(f"Modified: {len(modified)}")
-print(f"Output saved to: {OUTPUT_FILE}")
-print("================================")
+if __name__ == "__main__":
+    main()
