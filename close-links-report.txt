@@ -10,6 +10,7 @@ PREVIOUS_FILE = "input/previous_month.xlsx"
 CURRENT_FILE = "input/current_month.xlsx"
 OUTPUT_FILE = "output/comparison_output.xlsx"
 
+AUTH_URL = "https://your-auth-url"
 MAIN_REPORT_API = "https://your-main-report-api-url"
 STATUS_API = "https://your-status-api-url"
 
@@ -22,48 +23,76 @@ PASSWORD = "your_password"
 
 def get_auth_token():
     response = requests.post(
-        "https://your-auth-url",
+        AUTH_URL,
         json={"username": USERNAME, "password": PASSWORD}
     )
+    response.raise_for_status()
     return response.json().get("token")
 
 # =========================
-# LOAD EXCEL FILES
+# LOAD EXCEL
 # =========================
 
-def load_report(file_path):
-    df = pd.read_excel(file_path, skiprows=3)
+def load_report(path):
+    df = pd.read_excel(path, skiprows=3)
+    df.columns = df.columns.str.strip()
 
     # Remove unwanted columns
     df = df.drop(columns=["Voting (%)", "Interest (%)"], errors="ignore")
 
-    # Standardize column names (strip spaces)
-    df.columns = df.columns.str.strip()
-
     return df
 
 # =========================
-# FIX BLANK REGISTRATION NUMBERS
+# FILL BLANK REGISTRATION FROM PREVIOUS MONTH
 # =========================
 
-def fetch_registration_from_api(entity_id, headers):
-    response = requests.get(
-        f"{MAIN_REPORT_API}/{entity_id}",
-        headers=headers
+def fill_blank_registration(curr_df, prev_df):
+    for idx, row in curr_df.iterrows():
+        if pd.isna(row.get("Entity Registration Number")):
+            match = prev_df[
+                (prev_df["Subsidiary"] == row["Subsidiary"]) &
+                (prev_df["Country ISO-2 Code"] == row["Country ISO-2 Code"])
+            ]
+            if not match.empty:
+                curr_df.at[idx, "Entity Registration Number"] = \
+                    match.iloc[0]["Entity Registration Number"]
+
+    return curr_df
+
+# =========================
+# FETCH FULL API DATASET
+# =========================
+
+def fetch_full_api_dataset(headers):
+    response = requests.get(MAIN_REPORT_API, headers=headers)
+    response.raise_for_status()
+    return pd.DataFrame(response.json())
+
+# =========================
+# ENRICH EXCEL WITH CORPORATION ID
+# =========================
+
+def enrich_with_corporation_id(df, api_df):
+
+    api_df.columns = api_df.columns.str.strip()
+
+    # Build registration → CorporationID mapping
+    reg_map = dict(
+        zip(api_df["Entity Registration Number"], api_df["CorporationID"])
     )
 
-    if response.status_code == 200:
-        data = response.json()
-        return data.get("Entity Registration Number")
-    return None
+    # Map CorporationID
+    df["CorporationID"] = df["Entity Registration Number"].map(reg_map)
 
-def fix_blank_registrations(df, headers):
-    for index, row in df.iterrows():
-        if pd.isna(row.get("Entity Registration Number")):
-            entity_id = row.get("CorporationID")
-            latest_reg = fetch_registration_from_api(entity_id, headers)
-            if latest_reg:
-                df.at[index, "Entity Registration Number"] = latest_reg
+    # Fallback matching: Subsidiary + Country
+    for idx, row in df[df["CorporationID"].isna()].iterrows():
+        fallback = api_df[
+            (api_df["Subsidiary"] == row["Subsidiary"]) &
+            (api_df["Country ISO-2 Code"] == row["Country ISO-2 Code"])
+        ]
+        if not fallback.empty:
+            df.at[idx, "CorporationID"] = fallback.iloc[0]["CorporationID"]
+
     return df
 
 # =========================
@@ -72,12 +101,11 @@ def fix_blank_registrations(df, headers):
 
 def fetch_status_dataset(headers):
     response = requests.get(STATUS_API, headers=headers)
-    if response.status_code == 200:
-        return pd.DataFrame(response.json())
-    return pd.DataFrame()
+    response.raise_for_status()
+    return pd.DataFrame(response.json())
 
 # =========================
-# COMPARE REPORTS
+# COMPARE USING CORPORATION ID
 # =========================
 
 def compare_reports(prev_df, curr_df, status_df):
@@ -115,12 +143,12 @@ def compare_reports(prev_df, curr_df, status_df):
         row = prev_df.loc[cid]
         status_row = status_df[status_df["CorporationID"] == cid]
 
-        when_modified = None
         status = None
+        when_modified = None
 
         if not status_row.empty:
-            when_modified = status_row.iloc[0].get("WhenModified")
             status = status_row.iloc[0].get("Status")
+            when_modified = status_row.iloc[0].get("WhenModified")
 
         results.append({
             "CorporationID": cid,
@@ -155,7 +183,7 @@ def compare_reports(prev_df, curr_df, status_df):
     return pd.DataFrame(results)
 
 # =========================
-# MAIN EXECUTION
+# MAIN
 # =========================
 
 def main():
@@ -168,7 +196,17 @@ def main():
     prev_df = load_report(PREVIOUS_FILE)
     curr_df = load_report(CURRENT_FILE)
 
-    curr_df = fix_blank_registrations(curr_df, headers)
+    curr_df = fill_blank_registration(curr_df, prev_df)
+
+    api_df = fetch_full_api_dataset(headers)
+
+    prev_df = enrich_with_corporation_id(prev_df, api_df)
+    curr_df = enrich_with_corporation_id(curr_df, api_df)
+
+    # Safety check
+    if prev_df["CorporationID"].isna().any() or \
+       curr_df["CorporationID"].isna().any():
+        raise ValueError("Some rows could not be mapped to CorporationID.")
 
     status_df = fetch_status_dataset(headers)
 
