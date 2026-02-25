@@ -1,0 +1,55 @@
+import pandas as pd
+import re
+
+
+def normalize_address(row):
+    parts = [
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_E", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_City", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity", ""),
+        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country", "")
+    ]
+
+    parts = [str(p).strip() for p in parts if str(p).strip()]
+    address = ", ".join(parts)
+
+    # Remove duplicate commas
+    address = re.sub(r",+", ",", address)
+    address = re.sub(r"\s+,", ",", address)
+
+    return address.strip()
+
+
+def build_dataframe(api_response):
+    records = []
+
+    for item in api_response:
+        address = normalize_address(item)
+
+        records.append({
+            "CorporationID": item.get("CorporationID"),
+            "Subsidiary": item.get("Subsidiary"),
+            "ISO": item.get("Country ISO-2 Code"),
+            "RegistrationNumber": item.get("Entity Registration Number"),
+            "RegisteredAddress": address
+        })
+
+    return pd.DataFrame(records)
+
+
+def build_status_map(api_response):
+    status_map = {}
+
+    for item in api_response:
+        entity_id = item.get("EntityID")
+
+        status_map[entity_id] = {
+            "Status": item.get("Status"),
+            "DateModified": item.get("DateModified")
+        }
+
+    return status_map
