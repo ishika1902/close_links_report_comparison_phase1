@@ -1,0 +1,67 @@
+import pandas as pd
+import re
+
+
+def normalize_text(text):
+    if pd.isna(text):
+        return ""
+    text = str(text)
+    text = re.sub(r"[^\w\s]", "", text)  # remove punctuation
+    return text.strip().lower()
+
+
+def compare_snapshots(old_df, new_df, status_map):
+    log_rows = []
+
+    old_map = {row["CorporationID"]: row for _, row in old_df.iterrows()}
+    new_map = {row["CorporationID"]: row for _, row in new_df.iterrows()}
+
+    all_ids = set(old_map.keys()).union(set(new_map.keys()))
+
+    for entity_id in all_ids:
+
+        old = old_map.get(entity_id)
+        new = new_map.get(entity_id)
+        status_info = status_map.get(entity_id, {})
+
+        # ADDED
+        if old is None:
+            log_rows.append({
+                "ChangeType": "ADDED",
+                **new.to_dict(),
+                "Status": status_info.get("Status"),
+                "DateModified": status_info.get("DateModified"),
+                "ChangedFields": ""
+            })
+
+        # DELETED
+        elif new is None:
+            log_rows.append({
+                "ChangeType": "DELETED",
+                **old.to_dict(),
+                "Status": status_info.get("Status"),
+                "DateModified": status_info.get("DateModified"),
+                "ChangedFields": ""
+            })
+
+        # MODIFIED
+        else:
+            changes = []
+
+            for col in ["Subsidiary", "ISO", "RegistrationNumber", "RegisteredAddress"]:
+                old_val = normalize_text(old[col])
+                new_val = normalize_text(new[col])
+
+                if old_val != new_val:
+                    changes.append(col)
+
+            if changes:
+                log_rows.append({
+                    "ChangeType": "MODIFIED",
+                    **new.to_dict(),
+                    "Status": status_info.get("Status"),
+                    "DateModified": status_info.get("DateModified"),
+                    "ChangedFields": ", ".join(changes)
+                })
+
+    return pd.DataFrame(log_rows)
