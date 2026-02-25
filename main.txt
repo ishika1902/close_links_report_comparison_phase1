@@ -1,0 +1,68 @@
+from datetime import date
+from your_existing_api_script import fetch_query
+from transformer import build_dataframe, build_status_map
+from comparator import compare_snapshots
+from logger import write_log
+
+
+def get_reference_dates():
+    today = date.today()
+
+    # Safe logic (only use 10th after 10th passes)
+    if today.day > 10:
+        current_ref = date(today.year, today.month, 10)
+    else:
+        if today.month == 1:
+            current_ref = date(today.year - 1, 12, 10)
+        else:
+            current_ref = date(today.year, today.month - 1, 10)
+
+    # Previous reference date
+    if current_ref.month == 1:
+        prev_ref = date(current_ref.year - 1, 12, 10)
+    else:
+        prev_ref = date(current_ref.year, current_ref.month - 1, 10)
+
+    return prev_ref.isoformat(), current_ref.isoformat()
+
+
+def main():
+    print("Starting entity monitoring...")
+
+    prev_date, curr_date = get_reference_dates()
+
+    print(f"Comparing {prev_date} vs {curr_date}")
+
+    # API 1 - FCA Report
+    old_data = fetch_query(
+        "Close Links Report - for FCA Submission",
+        prev_date
+    )
+
+    new_data = fetch_query(
+        "Close Links Report - for FCA Submission",
+        curr_date
+    )
+
+    # API 2 - Status Report
+    status_data = fetch_query(
+        "Entity list with Statuses",
+        curr_date
+    )
+
+    # Transform
+    old_df = build_dataframe(old_data)
+    new_df = build_dataframe(new_data)
+    status_map = build_status_map(status_data)
+
+    # Compare
+    log_df = compare_snapshots(old_df, new_df, status_map)
+
+    # Write Excel
+    write_log(log_df)
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()
