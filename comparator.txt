@@ -6,11 +6,12 @@ def normalize_text(text):
     if pd.isna(text):
         return ""
     text = str(text)
-    text = re.sub(r"[^\w\s]", "", text)  # remove punctuation
+    text = re.sub(r"[^\w\s]", "", text)
     return text.strip().lower()
 
 
 def compare_snapshots(old_df, new_df, status_map):
+
     log_rows = []
 
     old_map = {row["CorporationID"]: row for _, row in old_df.iterrows()}
@@ -24,7 +25,6 @@ def compare_snapshots(old_df, new_df, status_map):
         new = new_map.get(entity_id)
         status_info = status_map.get(entity_id, {})
 
-        # ADDED
         if old is None:
             log_rows.append({
                 "ChangeType": "ADDED",
@@ -34,7 +34,6 @@ def compare_snapshots(old_df, new_df, status_map):
                 "ChangedFields": ""
             })
 
-        # DELETED
         elif new is None:
             log_rows.append({
                 "ChangeType": "DELETED",
@@ -44,15 +43,11 @@ def compare_snapshots(old_df, new_df, status_map):
                 "ChangedFields": ""
             })
 
-        # MODIFIED
         else:
             changes = []
 
             for col in ["Subsidiary", "ISO", "RegistrationNumber", "RegisteredAddress"]:
-                old_val = normalize_text(old[col])
-                new_val = normalize_text(new[col])
-
-                if old_val != new_val:
+                if normalize_text(old[col]) != normalize_text(new[col]):
                     changes.append(col)
 
             if changes:
