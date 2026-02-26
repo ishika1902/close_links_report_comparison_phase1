@@ -3,21 +3,21 @@ import re
 
 
 def normalize_address(row):
-    parts = [
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_E", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_City", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity", ""),
-        row.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country", "")
+
+    fields = [
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_E",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_City",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity",
+        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country"
     ]
 
-    parts = [str(p).strip() for p in parts if str(p).strip()]
+    parts = [str(row.get(f, "")).strip() for f in fields if str(row.get(f, "")).strip()]
     address = ", ".join(parts)
 
-    # Remove duplicate commas
     address = re.sub(r",+", ",", address)
     address = re.sub(r"\s+,", ",", address)
 
@@ -25,23 +25,23 @@ def normalize_address(row):
 
 
 def build_dataframe(api_response):
+
     records = []
 
     for item in api_response:
-        address = normalize_address(item)
-
         records.append({
             "CorporationID": item.get("CorporationID"),
             "Subsidiary": item.get("Subsidiary"),
             "ISO": item.get("Country ISO-2 Code"),
             "RegistrationNumber": item.get("Entity Registration Number"),
-            "RegisteredAddress": address
+            "RegisteredAddress": normalize_address(item)
         })
 
     return pd.DataFrame(records)
 
 
 def build_status_map(api_response):
+
     status_map = {}
 
     for item in api_response:
