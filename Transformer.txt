@@ -1,55 +1,77 @@
 import pandas as pd
+import json
 import re
 
 
-def normalize_address(row):
+def normalize_address(address):
+    if not address:
+        return ""
 
-    fields = [
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_E",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_City",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity",
-        "SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country"
-    ]
+    address = address.strip()
 
-    parts = [str(row.get(f, "")).strip() for f in fields if str(row.get(f, "")).strip()]
-    address = ", ".join(parts)
-
+    # remove extra commas / punctuation differences
     address = re.sub(r",+", ",", address)
-    address = re.sub(r"\s+,", ",", address)
+    address = re.sub(r"\s+", " ", address)
 
-    return address.strip()
+    return address
 
 
-def build_dataframe(api_response):
+def extract_data(raw_data):
+    """
+    Safely extract list of records from API response
+    """
+
+    # If response is string -> convert to JSON
+    if isinstance(raw_data, str):
+        raw_data = json.loads(raw_data)
+
+    # If wrapped inside dictionary (very common)
+    if isinstance(raw_data, dict):
+        # try common wrappers
+        for key in ["value", "data", "results"]:
+            if key in raw_data:
+                return raw_data[key]
+
+        # if not wrapped, maybe dict itself is record list
+        if isinstance(list(raw_data.values())[0], list):
+            return list(raw_data.values())[0]
+
+    return raw_data
+
+
+def build_dataframe(raw_data):
+
+    data = extract_data(raw_data)
 
     records = []
 
-    for item in api_response:
+    for item in data:
+
+        if not isinstance(item, dict):
+            continue
+
+        address_parts = [
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_E", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_City", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity", ""),
+            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country", ""),
+        ]
+
+        address = " ".join([str(x).strip() for x in address_parts if x])
+        address = normalize_address(address)
+
         records.append({
-            "CorporationID": item.get("CorporationID"),
+            "CorporationID": item.get("CorporationID") or item.get("EntityID"),
             "Subsidiary": item.get("Subsidiary"),
-            "ISO": item.get("Country ISO-2 Code"),
-            "RegistrationNumber": item.get("Entity Registration Number"),
-            "RegisteredAddress": normalize_address(item)
+            "ISO Code": item.get("ISOCode"),
+            "Registered Address": address,
+            "Registration Number": item.get("RegistrationNumber"),
+            "Status": item.get("Status"),
+            "Date Modified": item.get("DateModified")
         })
 
     return pd.DataFrame(records)
-
-
-def build_status_map(api_response):
-
-    status_map = {}
-
-    for item in api_response:
-        entity_id = item.get("EntityID")
-
-        status_map[entity_id] = {
-            "Status": item.get("Status"),
-            "DateModified": item.get("DateModified")
-        }
-
-    return status_map
