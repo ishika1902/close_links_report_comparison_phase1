@@ -3,11 +3,12 @@ from datetime import datetime
 
 
 def write_log(df):
+
     os.makedirs("logs", exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"logs/entity_changes_{timestamp}.xlsx"
 
-    df.to_excel(filename, index=False, engine="openpyxl")
+    df.to_excel(filename, index=False)
 
     print(f"Log file generated: {filename}")
