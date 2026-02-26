@@ -1,0 +1,92 @@
+import requests
+import json
+from datetime import date
+
+
+# ============================================================
+# AUTOMATIC REFERENCE DATE (SAFE 10TH LOGIC)
+# ============================================================
+
+def get_reference_dates():
+    today = date.today()
+
+    if today.day > 10:
+        current_ref = date(today.year, today.month, 10)
+    else:
+        if today.month == 1:
+            current_ref = date(today.year - 1, 12, 10)
+        else:
+            current_ref = date(today.year, today.month - 1, 10)
+
+    if current_ref.month == 1:
+        prev_ref = date(current_ref.year - 1, 12, 10)
+    else:
+        prev_ref = date(current_ref.year, current_ref.month - 1, 10)
+
+    return prev_ref.isoformat(), current_ref.isoformat()
+
+
+# ============================================================
+# AUTHENTICATION (UNCHANGED STRUCTURE)
+# ============================================================
+
+def getData():
+
+    prod_url = "https://englobe-uat.hk.hsbc/ids/connect/token"
+    payload = "xxx"
+
+    headers = {
+        'content-type': "application/x-www-form-urlencoded",
+        'cache-control': "no-cache"
+    }
+
+    response_token = requests.request(
+        "POST",
+        prod_url,
+        data=payload,
+        headers=headers,
+        verify=False
+    )
+
+    token = response_token.text.split(',')[0]
+    str_len = len(token)
+    access_token_server = token[16:str_len - 1]
+    access_token_server = access_token_server[1:]
+
+    auth_key = "bearer" + access_token_server
+
+    return auth_key
+
+
+# ============================================================
+# GENERIC QUERY CALL (SAME FORMAT)
+# ============================================================
+
+def call_query(query_name, reference_date):
+
+    prod_gsh_query = f"https://englobe-uat.hk.hsbc/api/api/queries/{query_name}"
+
+    auth = getData()
+
+    payload = json.dumps({
+        "ReferenceDate": reference_date
+    })
+
+    headers = {
+        'authorization': auth,
+        'cache-control': "no-cache",
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+    }
+
+    response = requests.request(
+        "POST",
+        prod_gsh_query,
+        data=payload,
+        headers=headers,
+        verify=False
+    )
+
+    response.raise_for_status()
+
+    return response.json()
