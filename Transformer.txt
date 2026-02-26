@@ -1,77 +1,55 @@
 import pandas as pd
-import json
-import re
 
 
-def normalize_address(address):
-    if not address:
+def clean_value(val):
+    if val is None:
         return ""
-
-    address = address.strip()
-
-    # remove extra commas / punctuation differences
-    address = re.sub(r",+", ",", address)
-    address = re.sub(r"\s+", " ", address)
-
-    return address
+    return str(val).strip()
 
 
-def extract_data(raw_data):
-    """
-    Safely extract list of records from API response
-    """
+def build_registered_address(item):
+    parts = [
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_E")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_City")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity")),
+        clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country")),
+    ]
 
-    # If response is string -> convert to JSON
-    if isinstance(raw_data, str):
-        raw_data = json.loads(raw_data)
+    # Remove empty values
+    parts = [p for p in parts if p]
 
-    # If wrapped inside dictionary (very common)
-    if isinstance(raw_data, dict):
-        # try common wrappers
-        for key in ["value", "data", "results"]:
-            if key in raw_data:
-                return raw_data[key]
-
-        # if not wrapped, maybe dict itself is record list
-        if isinstance(list(raw_data.values())[0], list):
-            return list(raw_data.values())[0]
-
-    return raw_data
+    return ", ".join(parts)
 
 
-def build_dataframe(raw_data):
+def build_dataframe(api_data):
 
-    data = extract_data(raw_data)
+    rows = []
 
-    records = []
+    if not api_data:
+        return pd.DataFrame()
 
-    for item in data:
+    # Handle wrapped response structure safely
+    if isinstance(api_data, dict):
+        api_data = api_data.get("value", [])
 
+    for item in api_data:
         if not isinstance(item, dict):
             continue
 
-        address_parts = [
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SNum", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_SN", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeSN", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_E", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeE", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_City", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_NativeCity", ""),
-            item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country", ""),
-        ]
+        row = {
+            "CorporationID": clean_value(item.get("CorporationID")),
+            "Subsidiary": clean_value(item.get("Subsidiary")),
+            "ISO": clean_value(item.get("Country ISO-2 Code")),
+            "RegistrationNumber": clean_value(item.get("Entity Registration Number")),
+            "RegisteredAddress": build_registered_address(item),
+        }
 
-        address = " ".join([str(x).strip() for x in address_parts if x])
-        address = normalize_address(address)
+        rows.append(row)
 
-        records.append({
-            "CorporationID": item.get("CorporationID") or item.get("EntityID"),
-            "Subsidiary": item.get("Subsidiary"),
-            "ISO Code": item.get("ISOCode"),
-            "Registered Address": address,
-            "Registration Number": item.get("RegistrationNumber"),
-            "Status": item.get("Status"),
-            "Date Modified": item.get("DateModified")
-        })
+    df = pd.DataFrame(rows)
 
-    return pd.DataFrame(records)
+    return df
