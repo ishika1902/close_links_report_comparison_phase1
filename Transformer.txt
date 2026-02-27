@@ -1,10 +1,17 @@
 import pandas as pd
+import re
 
 
 def clean_value(val):
     if val is None:
         return ""
     return str(val).strip()
+
+
+def normalize_address(address):
+    address = re.sub(r',+', ',', address)
+    address = re.sub(r'\s+', ' ', address)
+    return address.strip()
 
 
 def build_registered_address(item):
@@ -19,37 +26,45 @@ def build_registered_address(item):
         clean_value(item.get("SubsidiaryEntityRel.CurrentMainRegisteredAddress_Country")),
     ]
 
-    # Remove empty values
     parts = [p for p in parts if p]
+    address = ", ".join(parts)
 
-    return ", ".join(parts)
+    return normalize_address(address)
 
 
 def build_dataframe(api_data):
 
     rows = []
 
-    if not api_data:
-        return pd.DataFrame()
-
-    # Handle wrapped response structure safely
     if isinstance(api_data, dict):
         api_data = api_data.get("value", [])
 
     for item in api_data:
-        if not isinstance(item, dict):
-            continue
-
         row = {
             "CorporationID": clean_value(item.get("CorporationID")),
             "Subsidiary": clean_value(item.get("Subsidiary")),
-            "ISO": clean_value(item.get("Country ISO-2 Code")),
-            "RegistrationNumber": clean_value(item.get("Entity Registration Number")),
-            "RegisteredAddress": build_registered_address(item),
+            "Country ISO-2 Code": clean_value(item.get("Country ISO-2 Code")),
+            "Entity Registration Number": clean_value(item.get("Entity Registration Number")),
+            "Registered Address": build_registered_address(item),
         }
-
         rows.append(row)
 
-    df = pd.DataFrame(rows)
+    return pd.DataFrame(rows)
 
-    return df
+
+def build_status_map(status_data):
+
+    status_map = {}
+
+    if isinstance(status_data, dict):
+        status_data = status_data.get("value", [])
+
+    for item in status_data:
+        entity_id = clean_value(item.get("EntityID"))
+
+        status_map[entity_id] = {
+            "Status": clean_value(item.get("Status")),
+            "DateModified": clean_value(item.get("DateModified"))
+        }
+
+    return status_map
