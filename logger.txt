@@ -2,13 +2,38 @@ import os
 from datetime import datetime
 
 
-def write_log(df):
+def write_log(df, prev_date, curr_date):
+
+    if df.empty:
+        print("No changes detected.")
+        return
 
     os.makedirs("logs", exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"logs/entity_changes_{timestamp}.xlsx"
+    prev_dt = datetime.strptime(prev_date, "%Y-%m-%d")
+    curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
 
-    df.to_excel(filename, index=False)
+    prev_month = prev_dt.strftime("%b")
+    curr_month = curr_dt.strftime("%b")
 
-    print(f"Log file generated: {filename}")
+    prev_year = prev_dt.strftime("%Y")
+    curr_year = curr_dt.strftime("%Y")
+
+    if prev_year != curr_year:
+        file_name = (
+            f"logs/FCA_comparison_log_"
+            f"{prev_month}_{prev_year}_vs_"
+            f"{curr_month}_{curr_year}.xlsx"
+        )
+    else:
+        file_name = (
+            f"logs/FCA_comparison_log_"
+            f"{prev_month}_vs_{curr_month}_"
+            f"{curr_year}.xlsx"
+        )
+
+    df = df.sort_values(by=["Section"])
+
+    df.to_excel(file_name, index=False, engine="openpyxl")
+
+    print(f"Log file generated: {file_name}")
