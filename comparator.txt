@@ -1,62 +1,81 @@
 import pandas as pd
-import re
-
-
-def normalize_text(text):
-    if pd.isna(text):
-        return ""
-    text = str(text)
-    text = re.sub(r"[^\w\s]", "", text)
-    return text.strip().lower()
 
 
 def compare_snapshots(old_df, new_df, status_map):
 
-    log_rows = []
+    result_rows = []
 
-    old_map = {row["CorporationID"]: row for _, row in old_df.iterrows()}
-    new_map = {row["CorporationID"]: row for _, row in new_df.iterrows()}
+    old_dict = old_df.set_index("CorporationID").to_dict("index")
+    new_dict = new_df.set_index("CorporationID").to_dict("index")
 
-    all_ids = set(old_map.keys()).union(set(new_map.keys()))
+    old_ids = set(old_dict.keys())
+    new_ids = set(new_dict.keys())
 
-    for entity_id in all_ids:
+    added = new_ids - old_ids
+    deleted = old_ids - new_ids
+    common = old_ids & new_ids
 
-        old = old_map.get(entity_id)
-        new = new_map.get(entity_id)
-        status_info = status_map.get(entity_id, {})
+    # ADDED
+    for cid in added:
+        row = new_dict[cid]
+        status_info = status_map.get(cid, {})
+        result_rows.append({
+            "Section": "ADDED",
+            "Change Type": "ADDED",
+            "Version": "",
+            **row,
+            "Changed Fields": "",
+            **status_info
+        })
 
-        if old is None:
-            log_rows.append({
-                "ChangeType": "ADDED",
-                **new.to_dict(),
-                "Status": status_info.get("Status"),
-                "DateModified": status_info.get("DateModified"),
-                "ChangedFields": ""
+    # DELETED
+    for cid in deleted:
+        row = old_dict[cid]
+        status_info = status_map.get(cid, {})
+        result_rows.append({
+            "Section": "DELETED",
+            "Change Type": "DELETED",
+            "Version": "",
+            **row,
+            "Changed Fields": "",
+            **status_info
+        })
+
+    # MODIFIED
+    for cid in common:
+        old_row = old_dict[cid]
+        new_row = new_dict[cid]
+
+        changed_fields = []
+
+        for col in [
+            "Subsidiary",
+            "Country ISO-2 Code",
+            "Entity Registration Number",
+            "Registered Address"
+        ]:
+            if old_row[col] != new_row[col]:
+                changed_fields.append(col)
+
+        if changed_fields:
+            status_info = status_map.get(cid, {})
+
+            result_rows.append({
+                "Section": "MODIFIED",
+                "Change Type": "MODIFIED",
+                "Version": "OLD",
+                **old_row,
+                "Changed Fields": ", ".join(changed_fields),
+                **status_info
             })
 
-        elif new is None:
-            log_rows.append({
-                "ChangeType": "DELETED",
-                **old.to_dict(),
-                "Status": status_info.get("Status"),
-                "DateModified": status_info.get("DateModified"),
-                "ChangedFields": ""
+            result_rows.append({
+                "Section": "MODIFIED",
+                "Change Type": "MODIFIED",
+                "Version": "NEW",
+                **new_row,
+                "Changed Fields": ", ".join(changed_fields),
+                **status_info
             })
 
-        else:
-            changes = []
-
-            for col in ["Subsidiary", "ISO", "RegistrationNumber", "RegisteredAddress"]:
-                if normalize_text(old[col]) != normalize_text(new[col]):
-                    changes.append(col)
-
-            if changes:
-                log_rows.append({
-                    "ChangeType": "MODIFIED",
-                    **new.to_dict(),
-                    "Status": status_info.get("Status"),
-                    "DateModified": status_info.get("DateModified"),
-                    "ChangedFields": ", ".join(changes)
-                })
-
-    return pd.DataFrame(log_rows)
+    return pd.DataFrame(result_rows)
