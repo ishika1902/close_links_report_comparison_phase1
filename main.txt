@@ -31,7 +31,7 @@ def main():
 
     log_df = compare_snapshots(old_df, new_df, status_map)
 
-    write_log(log_df)
+    write_log(log_df, prev_date, curr_date)
 
 
 if __name__ == "__main__":
