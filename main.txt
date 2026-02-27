@@ -1,37 +1,54 @@
-from api_client import call_query, get_reference_dates
-from transformer import build_dataframe, build_status_map
-from comparator import compare_snapshots
+from api_client import call_query
+from transformer import build_dataframe
+from comparator import compare_data
 from logger import write_log
+from datetime import date
+
+
+# AUTOMATIC SAFE 10TH LOGIC
+def get_reference_dates():
+    today = date.today()
+
+    if today.day > 10:
+        current_ref = date(today.year, today.month, 10)
+    else:
+        if today.month == 1:
+            current_ref = date(today.year - 1, 12, 10)
+        else:
+            current_ref = date(today.year, today.month - 1, 10)
+
+    if current_ref.month == 1:
+        prev_ref = date(current_ref.year - 1, 12, 10)
+    else:
+        prev_ref = date(current_ref.year, current_ref.month - 1, 10)
+
+    return prev_ref.isoformat(), current_ref.isoformat()
 
 
 def main():
 
-    prev_date, curr_date = get_reference_dates()
+    previous_reference_date, current_reference_date = get_reference_dates()
 
-    print(f"Comparing {prev_date} vs {curr_date}")
+    access_token = "YOUR_ACCESS_TOKEN"
 
-    old_data = call_query(
-        "Close Links Report - for FCA Submission",
-        prev_date
-    )
+    print("Previous Ref Date:", previous_reference_date)
+    print("Current Ref Date:", current_reference_date)
 
-    new_data = call_query(
-        "Close Links Report - for FCA Submission",
-        curr_date
-    )
+    prev_data = call_query(previous_reference_date, access_token)
+    curr_data = call_query(current_reference_date, access_token)
 
-    status_data = call_query(
-        "Entity list with Statuses",
-        curr_date
-    )
+    prev_df = build_dataframe(prev_data)
+    curr_df = build_dataframe(curr_data)
 
-    old_df = build_dataframe(old_data)
-    new_df = build_dataframe(new_data)
-    status_map = build_status_map(status_data)
+    added, deleted, modified = compare_data(prev_df, curr_df)
 
-    log_df = compare_snapshots(old_df, new_df, status_map)
+    prev_month = previous_reference_date[5:7]
+    curr_month = current_reference_date[5:7]
+    year = current_reference_date[:4]
 
-    write_log(log_df, prev_date, curr_date)
+    log_file = write_log(added, deleted, modified, prev_month, curr_month, year)
+
+    print(f"Log file generated: {log_file}")
 
 
 if __name__ == "__main__":
