@@ -1,37 +1,10 @@
 import requests
 import json
-from datetime import date
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
-
-# ============================================================
-# AUTOMATIC REFERENCE DATE (SAFE 10TH LOGIC)
-# ============================================================
-
-def get_reference_dates():
-    today = date.today()
-
-    if today.day > 10:
-        current_ref = date(today.year, today.month, 10)
-    else:
-        if today.month == 1:
-            current_ref = date(today.year - 1, 12, 10)
-        else:
-            current_ref = date(today.year, today.month - 1, 10)
-
-    if current_ref.month == 1:
-        prev_ref = date(current_ref.year - 1, 12, 10)
-    else:
-        prev_ref = date(current_ref.year, current_ref.month - 1, 10)
-
-    return prev_ref.isoformat(), current_ref.isoformat()
-
-
-# ============================================================
-# AUTHENTICATION (UNCHANGED STRUCTURE)
-# ============================================================
 
 def getData():
-
     prod_url = "https://englobe-uat.hk.hsbc/ids/connect/token"
     payload = "xxx"
 
@@ -52,24 +25,27 @@ def getData():
     str_len = len(token)
     access_token_server = token[16:str_len - 1]
     access_token_server = access_token_server[1:]
-
     auth_key = "bearer" + access_token_server
 
     return auth_key
 
 
-# ============================================================
-# GENERIC QUERY CALL (SAME FORMAT)
-# ============================================================
+def get_reference_dates():
+    today = datetime.today()
+    current = today.replace(day=10)
+    previous = (current - relativedelta(months=1)).replace(day=10)
+
+    return previous.strftime("%Y-%m-%d"), current.strftime("%Y-%m-%d")
+
 
 def call_query(query_name, reference_date):
 
-    prod_gsh_query = f"https://englobe-uat.hk.hsbc/api/api/queries/{query_name}"
+    prod_query_url = f"https://englobe-uat.hk.hsbc/api/api/queries/{query_name}"
 
     auth = getData()
 
     payload = json.dumps({
-        "ReferenceDate": reference_date
+        "RefDate": reference_date   # ✅ CORRECT KEY
     })
 
     headers = {
@@ -81,12 +57,10 @@ def call_query(query_name, reference_date):
 
     response = requests.request(
         "POST",
-        prod_gsh_query,
+        prod_query_url,
         data=payload,
         headers=headers,
         verify=False
     )
-
-    response.raise_for_status()
 
     return response.json()
